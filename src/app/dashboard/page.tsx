@@ -15,6 +15,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { DashboardStats } from '@/lib/types'
 import { useAuth } from '@/lib/auth-context'
+import { useRouter } from 'next/navigation'
 
 function DashboardCard({ 
   title, 
@@ -63,7 +64,15 @@ function StatusCard({
 }
 
 export default function DashboardPage() {
+  const router = useRouter()
   const { user, profile, loading: authLoading } = useAuth()
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/auth/login')
+    }
+  }, [authLoading, user, router])
+
   const [stats, setStats] = useState<DashboardStats>({
     total_debt: 0,
     total_paid: 0,

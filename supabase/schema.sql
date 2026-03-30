@@ -25,11 +25,13 @@ CREATE TABLE debts (
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     debtor_id UUID NOT NULL REFERENCES debtors(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
-    amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
-    due_date DATE NOT NULL,
-    status TEXT DEFAULT 'unpaid' CHECK (status IN ('unpaid', 'partial', 'paid', 'near_due', 'overdue')),
+    total_amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
+    remaining_amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
+    due_date DATE,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'partial', 'paid', 'overdue')),
     notes TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Payments table for partial payments
@@ -101,7 +103,7 @@ BEGIN
     END IF;
     
     -- Get debt info
-    SELECT d.amount, d.due_date INTO original_amount, due
+    SELECT d.total_amount, d.due_date INTO original_amount, due
     FROM debts d WHERE d.id = target_debt_id;
     
     -- Calculate total paid
@@ -111,18 +113,18 @@ BEGIN
     -- Calculate days until due
     days_until_due := EXTRACT(DAY FROM (due - CURRENT_DATE));
     
-    -- Update status based on payment and due date
-    IF total_paid >= original_amount THEN
-        UPDATE debts SET status = 'paid' WHERE id = target_debt_id;
-    ELSIF total_paid > 0 THEN
-        UPDATE debts SET status = 'partial' WHERE id = target_debt_id;
-    ELSIF due < CURRENT_DATE THEN
-        UPDATE debts SET status = 'overdue' WHERE id = target_debt_id;
-    ELSIF days_until_due <= 3 AND days_until_due >= 0 THEN
-        UPDATE debts SET status = 'near_due' WHERE id = target_debt_id;
-    ELSE
-        UPDATE debts SET status = 'unpaid' WHERE id = target_debt_id;
-    END IF;
+    -- Update status and remaining amount based on payments and due date
+    UPDATE debts
+      SET
+        remaining_amount = GREATEST(original_amount - total_paid, 0),
+        status = CASE
+          WHEN total_paid >= original_amount THEN 'paid'
+          WHEN total_paid > 0 THEN 'partial'
+          WHEN due < CURRENT_DATE THEN 'overdue'
+          ELSE 'pending'
+        END,
+        updated_at = NOW()
+      WHERE id = target_debt_id;
     
     IF TG_OP = 'DELETE' THEN
         RETURN OLD;

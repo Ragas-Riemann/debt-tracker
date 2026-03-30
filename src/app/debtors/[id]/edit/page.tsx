@@ -10,7 +10,7 @@ import { useAuth } from '@/lib/auth-context'
 export default function EditDebtorPage() {
   const router = useRouter()
   const params = useParams()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [formData, setFormData] = useState({
@@ -27,10 +27,15 @@ export default function EditDebtorPage() {
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/auth/login')
+      return
+    }
+
     if (user && params.id) {
       fetchDebtor()
     }
-  }, [user, params.id])
+  }, [user, authLoading, params.id, router])
 
   async function fetchDebtor() {
     try {

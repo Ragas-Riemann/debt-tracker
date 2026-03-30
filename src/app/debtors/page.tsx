@@ -17,18 +17,26 @@ interface DebtorWithTotal {
   total_remaining: number
 }
 
+import { useRouter } from 'next/navigation'
+
 export default function DebtorsList() {
-  const { user } = useAuth()
+  const router = useRouter()
+  const { user, loading: authLoading } = useAuth()
   const [debtors, setDebtors] = useState<DebtorWithTotal[]>([])
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/auth/login')
+      return
+    }
+
     if (user) {
       fetchDebtors()
     }
-  }, [user])
+  }, [user, authLoading, router])
 
   async function fetchDebtors() {
     try {

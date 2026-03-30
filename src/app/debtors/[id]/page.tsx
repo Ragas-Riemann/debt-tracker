@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useParams } from 'next/navigation'
+import { useRouter, useParams } from 'next/navigation'
 import {
   ArrowLeft,
   Plus,
@@ -36,7 +35,7 @@ interface DebtWithPayments extends Debt {
 export default function DebtorDetailPage() {
   const router = useRouter()
   const params = useParams()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const [debtor, setDebtor] = useState<Debtor | null>(null)
   const [debts, setDebts] = useState<DebtWithPayments[]>([])
   const [loading, setLoading] = useState(true)
@@ -57,10 +56,15 @@ export default function DebtorDetailPage() {
   const [addingPayment, setAddingPayment] = useState(false)
 
   useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/auth/login')
+      return
+    }
+
     if (user && params.id) {
       fetchDebtorData()
     }
-  }, [user, params.id])
+  }, [user, authLoading, params.id, router])
 
   async function fetchDebtorData() {
     try {
