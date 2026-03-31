@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import { Profile } from './types'
 import { supabase } from './supabase'
 import type { Session, User } from '@supabase/supabase-js'
+import { getErrorMessage } from './error-utils'
 
 interface AuthContextType {
   user: User | null
@@ -74,38 +75,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signUp = async (email: string, password: string) => {
-    const { error, data } = await supabase.auth.signUp({ email, password })
-    if (error) return { error }
-
-    if (data.user) {
-      await supabase.from('profiles').upsert({
-        id: data.user.id,
-        email: data.user.email,
-        name: null,
-        avatar_url: null,
-      })
+    try {
+      // Rely on the `handle_new_user` trigger in Supabase to create the profile.
+      const { error } = await supabase.auth.signUp({ email, password })
+      if (error) return { error }
+      return { error: null }
+    } catch (error) {
+      return { error: new Error(getErrorMessage(error, 'Sign up failed.')) }
     }
-
-    return { error: null }
   }
 
   const signIn = async (email: string, password: string) => {
-    const { error, data } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) return { error }
+    try {
+      const { error, data } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) return { error }
 
-    if (data.session?.user) {
-      const profileData = await fetchProfile(data.session.user.id)
-      setProfile(profileData)
+      if (data.session?.user) {
+        const profileData = await fetchProfile(data.session.user.id)
+        setProfile(profileData)
+      }
+
+      return { error: null }
+    } catch (error) {
+      return { error: new Error(getErrorMessage(error, 'Sign in failed.')) }
     }
-
-    return { error: null }
   }
 
   const signOut = async () => {
-    await supabase.auth.signOut()
-    setUser(null)
-    setSession(null)
-    setProfile(null)
+    try {
+      await supabase.auth.signOut()
+      setUser(null)
+      setSession(null)
+      setProfile(null)
+    } catch (error) {
+      console.error('Sign out failed:', error)
+    }
   }
 
   return (

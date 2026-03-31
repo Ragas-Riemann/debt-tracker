@@ -16,6 +16,7 @@ import { supabase } from '@/lib/supabase'
 import { DashboardStats } from '@/lib/types'
 import { useAuth } from '@/lib/auth-context'
 import { useRouter } from 'next/navigation'
+import { getErrorMessage, showErrorWarning } from '@/lib/error-utils'
 
 function DashboardCard({ 
   title, 
@@ -86,36 +87,26 @@ export default function DashboardPage() {
   })
   const [dataLoading, setDataLoading] = useState(true)
   const [recentDebtors, setRecentDebtors] = useState<any[]>([])
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    console.log('[Dashboard] Auth state:', { user: user?.email, authLoading })
     if (user && !authLoading) {
       fetchDashboardData()
     } else if (!authLoading && !user) {
-      console.log('[Dashboard] No user, stopping data loading')
       setDataLoading(false)
     }
   }, [user, authLoading])
 
   async function fetchDashboardData() {
     try {
-      console.log('[Dashboard] Fetching data...')
+      if (!user) return
       setDataLoading(true)
-
-      // Fetch all payments for total paid calculation
-      const { data: payments, error: paymentsError } = await supabase
-        .from('payments')
-        .select('amount')
-
-      if (paymentsError) {
-        console.error('[Dashboard] Payments error:', paymentsError)
-        throw paymentsError
-      }
 
       // Fetch all debts
       const { data: debts, error: debtsError } = await supabase
         .from('debts')
         .select('*, debtor:debtors(*)')
+        .eq('user_id', user.id)
 
       if (debtsError) {
         console.error('[Dashboard] Debts error:', debtsError)
@@ -126,6 +117,7 @@ export default function DashboardPage() {
       const { count: debtorCount, error: debtorError } = await supabase
         .from('debtors')
         .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
 
       if (debtorError) {
         console.error('[Dashboard] Debtor count error:', debtorError)
@@ -158,6 +150,7 @@ export default function DashboardPage() {
       const { data: recent, error: recentError } = await supabase
         .from('debtors')
         .select('*')
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(5)
 
@@ -173,6 +166,7 @@ export default function DashboardPage() {
             .from('debts')
             .select('id, total_amount, remaining_amount, status')
             .eq('debtor_id', debtor.id)
+            .eq('user_id', user.id)
 
           const totalOwed = debtorDebts?.reduce((sum, d) => sum + (d.total_amount || 0), 0) || 0
           const totalRemainingForDebtor = debtorDebts?.reduce((sum, d) => sum + (d.remaining_amount || 0), 0) || 0
@@ -186,9 +180,12 @@ export default function DashboardPage() {
       )
 
       setRecentDebtors(debtorsWithTotals)
-      console.log('[Dashboard] Data fetched successfully:', { debtorCount, debtCount: debts?.length })
+      setError('')
     } catch (error) {
       console.error('[Dashboard] Error fetching dashboard data:', error)
+      const message = getErrorMessage(error, 'Unable to load dashboard data right now.')
+      setError(message)
+      showErrorWarning(message)
     } finally {
       setDataLoading(false)
     }
@@ -214,6 +211,12 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex items-center gap-3">

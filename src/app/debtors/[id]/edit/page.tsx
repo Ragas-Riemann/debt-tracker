@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { ArrowLeft, Upload, User, Trash2, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth-context'
+import { getErrorMessage, showErrorWarning, validateImageFile } from '@/lib/error-utils'
 
 export default function EditDebtorPage() {
   const router = useRouter()
@@ -25,6 +26,7 @@ export default function EditDebtorPage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -39,11 +41,12 @@ export default function EditDebtorPage() {
 
   async function fetchDebtor() {
     try {
+      if (!user) return
       const { data, error } = await supabase
         .from('debtors')
         .select('*')
         .eq('id', params.id)
-        .eq('user_id', user?.id)
+        .eq('user_id', user.id)
         .single()
 
       if (error) throw error
@@ -61,6 +64,9 @@ export default function EditDebtorPage() {
       setAvatarUrl(data.avatar_url)
     } catch (error) {
       console.error('Error fetching debtor:', error)
+      const message = getErrorMessage(error, 'Failed to load debtor details.')
+      setError(message)
+      showErrorWarning(message)
       router.push('/debtors')
     } finally {
       setLoading(false)
@@ -75,6 +81,14 @@ export default function EditDebtorPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      const fileError = validateImageFile(file)
+      if (fileError) {
+        setError(fileError)
+        showErrorWarning(fileError)
+        return
+      }
+
+      setError('')
       setAvatarFile(file)
       const reader = new FileReader()
       reader.onloadend = () => {
@@ -86,9 +100,10 @@ export default function EditDebtorPage() {
 
   const uploadAvatar = async (file: File): Promise<string | null> => {
     try {
+      if (!user) return null
       const fileExt = file.name.split('.').pop()
       const fileName = `${Date.now()}.${fileExt}`
-      const filePath = `avatars/${fileName}`
+      const filePath = `${user.id}/${fileName}`
 
       const { error: uploadError } = await supabase.storage
         .from('avatars')
@@ -112,7 +127,21 @@ export default function EditDebtorPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!user) {
+      const message = 'You must be logged in to update this debtor.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
+    if (!formData.name.trim()) {
+      const message = 'Name is required.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
+
     setSubmitting(true)
+    setError('')
 
     try {
       let newAvatarUrl = avatarUrl
@@ -132,13 +161,16 @@ export default function EditDebtorPage() {
           avatar_url: newAvatarUrl,
         })
         .eq('id', params.id)
+        .eq('user_id', user.id)
 
       if (error) throw error
 
       router.push(`/debtors/${params.id}`)
     } catch (error) {
       console.error('Error updating debtor:', error)
-      alert('Failed to update debtor. Please try again.')
+      const message = getErrorMessage(error, 'Failed to update debtor. Please try again.')
+      setError(message)
+      showErrorWarning(message)
     } finally {
       setSubmitting(false)
     }
@@ -148,20 +180,30 @@ export default function EditDebtorPage() {
     if (!confirm('Are you sure you want to delete this debtor and all their debts? This cannot be undone.')) {
       return
     }
+    if (!user) {
+      const message = 'You must be logged in to delete this debtor.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
 
     setDeleting(true)
+    setError('')
     try {
       const { error } = await supabase
         .from('debtors')
         .delete()
         .eq('id', params.id)
+        .eq('user_id', user.id)
 
       if (error) throw error
 
       router.push('/debtors')
     } catch (error) {
       console.error('Error deleting debtor:', error)
-      alert('Failed to delete debtor')
+      const message = getErrorMessage(error, 'Failed to delete debtor.')
+      setError(message)
+      showErrorWarning(message)
       setDeleting(false)
     }
   }
@@ -193,6 +235,12 @@ export default function EditDebtorPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {error && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
           {/* Avatar Upload */}
           <div className="flex flex-col items-center">
             <div

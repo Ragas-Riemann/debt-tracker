@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Search, Plus, Eye, Edit, Trash2, User, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth-context'
+import { getErrorMessage, showErrorWarning } from '@/lib/error-utils'
 
 interface DebtorWithTotal {
   id: string
@@ -26,6 +27,7 @@ export default function DebtorsList() {
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -41,10 +43,13 @@ export default function DebtorsList() {
   async function fetchDebtors() {
     try {
       setLoading(true)
+
+      if (!user) return
       
       const { data: debtorsData, error: debtorsError } = await supabase
         .from('debtors')
         .select('*')
+        .eq('user_id', user.id)
         .order('name')
 
       if (debtorsError) throw debtorsError
@@ -57,6 +62,7 @@ export default function DebtorsList() {
             .from('debts')
             .select('id, total_amount, remaining_amount')
             .eq('debtor_id', debtor.id)
+            .eq('user_id', user.id)
 
           const totalDebt = debts?.reduce((sum, debt) => sum + (debt.total_amount || 0), 0) || 0
           const totalRemaining = debts?.reduce((sum, debt) => sum + (debt.remaining_amount || 0), 0) || 0
@@ -72,8 +78,12 @@ export default function DebtorsList() {
       )
 
       setDebtors(debtorsWithTotals)
+      setError('')
     } catch (error) {
       console.error('Error fetching debtors:', error)
+      const message = getErrorMessage(error, 'Unable to load debtors right now.')
+      setError(message)
+      showErrorWarning(message)
     } finally {
       setLoading(false)
     }
@@ -83,20 +93,25 @@ export default function DebtorsList() {
     if (!confirm('Are you sure you want to delete this debtor and all their debts?')) {
       return
     }
+    if (!user) return
 
     setDeleting(id)
+    setError('')
     try {
       const { error } = await supabase
         .from('debtors')
         .delete()
         .eq('id', id)
+        .eq('user_id', user.id)
 
       if (error) throw error
 
       setDebtors(debtors.filter(d => d.id !== id))
     } catch (error) {
       console.error('Error deleting debtor:', error)
-      alert('Failed to delete debtor')
+      const message = getErrorMessage(error, 'Failed to delete debtor.')
+      setError(message)
+      showErrorWarning(message)
     } finally {
       setDeleting(null)
     }
@@ -132,6 +147,12 @@ export default function DebtorsList() {
       </div>
 
       {/* Search */}
+      {error && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
       <div className="relative">
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
         <input

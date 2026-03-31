@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth-context'
 import { Loader2 } from 'lucide-react'
+import { getErrorMessage, showErrorWarning } from '@/lib/error-utils'
 
 export default function SignUpPage() {
   const router = useRouter()
@@ -21,17 +22,34 @@ export default function SignUpPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setSaving(true)
-    setError('')
 
-    const { error } = await signUp(email, password)
-    if (error) {
-      setError(error.message)
-      setSaving(false)
+    const allowedDomain = '@urios.edu.ph'
+    const normalizedEmail = email.trim().toLowerCase()
+    if (!normalizedEmail.endsWith(allowedDomain)) {
+      const message = `Only ${allowedDomain} email addresses are allowed to sign up.`
+      setError(message)
+      showErrorWarning(message)
       return
     }
 
-    router.push('/dashboard')
+    setSaving(true)
+    setError('')
+    try {
+      const { error } = await signUp(email, password)
+      if (error) {
+        setError(error.message)
+        showErrorWarning(error.message)
+        return
+      }
+
+      router.push('/dashboard')
+    } catch (error) {
+      const message = getErrorMessage(error, 'Unable to create your account right now.')
+      setError(message)
+      showErrorWarning(message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (

@@ -23,8 +23,9 @@ import {
   ChevronUp,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { Debtor, Debt, Payment } from '@/lib/types'
+import { Debtor, Debt, Payment, type DebtStatus } from '@/lib/types'
 import { useAuth } from '@/lib/auth-context'
+import { getErrorMessage, showErrorWarning } from '@/lib/error-utils'
 
 interface DebtWithPayments extends Debt {
   payments: Payment[]
@@ -54,6 +55,7 @@ export default function DebtorDetailPage() {
   })
   const [addingDebt, setAddingDebt] = useState(false)
   const [addingPayment, setAddingPayment] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -67,6 +69,7 @@ export default function DebtorDetailPage() {
   }, [user, authLoading, params.id, router])
 
   async function fetchDebtorData() {
+    if (!user) return
     try {
       setLoading(true)
       
@@ -75,6 +78,7 @@ export default function DebtorDetailPage() {
         .from('debtors')
         .select('*')
         .eq('id', params.id)
+        .eq('user_id', user.id)
         .single()
 
       if (debtorError) throw debtorError
@@ -84,6 +88,7 @@ export default function DebtorDetailPage() {
         .from('debts')
         .select('*')
         .eq('debtor_id', params.id)
+        .eq('user_id', user.id)
         .order('due_date', { ascending: true })
 
       if (debtsError) throw debtsError
@@ -95,6 +100,7 @@ export default function DebtorDetailPage() {
             .from('payments')
             .select('*')
             .eq('debt_id', debt.id)
+            .eq('user_id', user.id)
             .order('payment_date', { ascending: false })
 
           const totalPaid = (payments || []).reduce((sum, p) => sum + (p.amount || 0), 0)
@@ -110,9 +116,12 @@ export default function DebtorDetailPage() {
 
       setDebtor(debtorData)
       setDebts(debtsWithPayments)
+      setError('')
     } catch (error) {
       console.error('Error fetching data:', error)
-      router.push('/debtors')
+      const message = getErrorMessage(error, 'Failed to load this debtor.')
+      setError(message)
+      showErrorWarning(message)
     } finally {
       setLoading(false)
     }
@@ -121,20 +130,47 @@ export default function DebtorDetailPage() {
   async function addDebt(e: React.FormEvent) {
     e.preventDefault()
     if (!user) return
+
+    const parsedAmount = parseFloat(debtForm.amount)
+    if (!debtForm.title.trim()) {
+      const message = 'Debt title is required.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      const message = 'Debt amount must be greater than 0.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
+    if (!debtForm.due_date) {
+      const message = 'Please select a due date.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
     
     setAddingDebt(true)
+    setError('')
 
     try {
+      const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+      const status: DebtStatus =
+        debtForm.due_date && debtForm.due_date < today ? 'overdue' : 'pending'
+
       const { error } = await supabase
         .from('debts')
         .insert([
           {
+            user_id: user.id,
             debtor_id: params.id,
             title: debtForm.title,
-            total_amount: parseFloat(debtForm.amount),
-            remaining_amount: parseFloat(debtForm.amount),
+            total_amount: parsedAmount,
+            remaining_amount: parsedAmount,
             due_date: debtForm.due_date,
-            status: 'pending',
+            status,
+            notes: debtForm.notes || null,
           },
         ])
 
@@ -145,7 +181,9 @@ export default function DebtorDetailPage() {
       fetchDebtorData()
     } catch (error) {
       console.error('Error adding debt:', error)
-      alert('Failed to add debt')
+      const message = getErrorMessage(error, 'Failed to add debt.')
+      setError(message)
+      showErrorWarning(message)
     } finally {
       setAddingDebt(false)
     }
@@ -154,28 +192,38 @@ export default function DebtorDetailPage() {
   async function addPayment(e: React.FormEvent, debtId: string) {
     e.preventDefault()
     if (!user) return
-    
+    const targetDebt = debts.find((debt) => debt.id === debtId)
+    const paymentAmount = parseFloat(paymentForm.amount)
+
+    if (!targetDebt) {
+      const message = 'Debt not found. Please refresh and try again.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      const message = 'Payment amount must be greater than 0.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
+    if (paymentAmount > targetDebt.remaining_amount) {
+      const message = 'Payment amount cannot be greater than remaining balance.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
+
     setAddingPayment(true)
+    setError('')
 
     try {
-      const paymentAmount = parseFloat(paymentForm.amount)
-      
-      // First, get current debt to calculate new remaining
-      const { data: currentDebt } = await supabase
-        .from('debts')
-        .select('remaining_amount')
-        .eq('id', debtId)
-        .single()
-      
-      if (!currentDebt) throw new Error('Debt not found')
-      
-      const newRemaining = currentDebt.remaining_amount - paymentAmount
-      
-      // Insert payment
+      // Insert payment; Supabase trigger will recalculate remaining_amount and status.
       const { error: paymentError } = await supabase
         .from('payments')
         .insert([
           {
+            user_id: user.id,
             debt_id: debtId,
             amount: paymentAmount,
             note: paymentForm.notes || null,
@@ -185,29 +233,14 @@ export default function DebtorDetailPage() {
 
       if (paymentError) throw paymentError
 
-      // Update debt remaining_amount and status
-      let newStatus: string
-      if (newRemaining <= 0) {
-        newStatus = 'paid'
-      } else if (newRemaining < currentDebt.remaining_amount) {
-        newStatus = 'partial'
-      } else {
-        newStatus = 'pending'
-      }
-      
-      const { error: updateError } = await supabase
-        .from('debts')
-        .update({ remaining_amount: newRemaining, status: newStatus })
-        .eq('id', debtId)
-        
-      if (updateError) throw updateError
-
       setPaymentForm({ amount: '', notes: '' })
       setShowAddPayment(null)
       fetchDebtorData()
     } catch (error) {
       console.error('Error adding payment:', error)
-      alert('Failed to add payment')
+      const message = getErrorMessage(error, 'Failed to add payment.')
+      setError(message)
+      showErrorWarning(message)
     } finally {
       setAddingPayment(false)
     }
@@ -215,11 +248,14 @@ export default function DebtorDetailPage() {
 
   async function deletePayment(paymentId: string) {
     if (!confirm('Are you sure you want to delete this payment?')) return
+    if (!user) return
 
     try {
+      setError('')
       const { error } = await supabase
         .from('payments')
         .delete()
+        .eq('user_id', user.id)
         .eq('id', paymentId)
 
       if (error) throw error
@@ -227,17 +263,22 @@ export default function DebtorDetailPage() {
       fetchDebtorData()
     } catch (error) {
       console.error('Error deleting payment:', error)
-      alert('Failed to delete payment')
+      const message = getErrorMessage(error, 'Failed to delete payment.')
+      setError(message)
+      showErrorWarning(message)
     }
   }
 
   async function deleteDebt(debtId: string) {
     if (!confirm('Are you sure you want to delete this debt? All payments will also be deleted.')) return
+    if (!user) return
 
     try {
+      setError('')
       const { error } = await supabase
         .from('debts')
         .delete()
+        .eq('user_id', user.id)
         .eq('id', debtId)
 
       if (error) throw error
@@ -245,7 +286,9 @@ export default function DebtorDetailPage() {
       setDebts(debts.filter(d => d.id !== debtId))
     } catch (error) {
       console.error('Error deleting debt:', error)
-      alert('Failed to delete debt')
+      const message = getErrorMessage(error, 'Failed to delete debt.')
+      setError(message)
+      showErrorWarning(message)
     }
   }
 
@@ -301,6 +344,12 @@ export default function DebtorDetailPage() {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
       <div className="flex items-center">
         <Link href="/debtors" className="flex items-center text-gray-600 hover:text-gray-900">
           <ArrowLeft className="w-5 h-5 mr-2" />

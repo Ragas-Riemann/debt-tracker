@@ -2,10 +2,17 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
-  // Redirect root to dashboard
-  if (request.nextUrl.pathname === '/') {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
-  }
+  const pathname = request.nextUrl.pathname
+  const isAuthRoute =
+    pathname.startsWith('/auth/login') ||
+    pathname.startsWith('/auth/signup') ||
+    pathname.startsWith('/auth/callback')
+
+  const isProtectedRoute =
+    pathname === '/dashboard' ||
+    pathname.startsWith('/dashboard/') ||
+    pathname === '/debtors' ||
+    pathname.startsWith('/debtors/')
 
   let response = NextResponse.next({
     request: {
@@ -59,6 +66,24 @@ export async function middleware(request: NextRequest) {
     }
   )
 
+  // Server-side route protection to prevent loading protected pages without a session.
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    // Allow auth routes (login/signup/callback) and static assets (handled by matcher).
+    if (!isAuthRoute && (pathname === '/' || isProtectedRoute)) {
+      const redirectUrl = new URL(`/auth/login?redirect=${encodeURIComponent('/dashboard')}`, request.url)
+      return NextResponse.redirect(redirectUrl)
+    }
+  } else {
+    // Logged-in users shouldn't stay on login/signup.
+    if (pathname === '/' || pathname.startsWith('/auth/login') || pathname.startsWith('/auth/signup')) {
+      const redirectUrl = new URL('/dashboard', request.url)
+      return NextResponse.redirect(redirectUrl)
+    }
+  }
+
+  // Let the request continue (cookies may have been refreshed by Supabase SSR).
   return response
 }
 

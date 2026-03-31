@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth-context'
 import { Loader2 } from 'lucide-react'
+import { getErrorMessage, showErrorWarning } from '@/lib/error-utils'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -23,15 +24,22 @@ export default function LoginPage() {
     e.preventDefault()
     setSaving(true)
     setError('')
+    try {
+      const { error } = await signIn(email, password)
+      if (error) {
+        setError(error.message)
+        showErrorWarning(error.message)
+        return
+      }
 
-    const { error } = await signIn(email, password)
-    if (error) {
-      setError(error.message)
+      router.push('/dashboard')
+    } catch (error) {
+      const message = getErrorMessage(error, 'Unable to sign in right now.')
+      setError(message)
+      showErrorWarning(message)
+    } finally {
       setSaving(false)
-      return
     }
-
-    router.push('/dashboard')
   }
 
   return (

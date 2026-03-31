@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { ArrowLeft, Upload, User, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth-context'
+import { getErrorMessage, showErrorWarning, validateImageFile } from '@/lib/error-utils'
 
 export default function NewDebtorPage() {
   const router = useRouter()
@@ -27,6 +28,7 @@ export default function NewDebtorPage() {
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
@@ -36,6 +38,14 @@ export default function NewDebtorPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      const fileError = validateImageFile(file)
+      if (fileError) {
+        setError(fileError)
+        showErrorWarning(fileError)
+        return
+      }
+
+      setError('')
       setAvatarFile(file)
       const reader = new FileReader()
       reader.onloadend = () => {
@@ -47,9 +57,10 @@ export default function NewDebtorPage() {
 
   const uploadAvatar = async (file: File): Promise<string | null> => {
     try {
+      if (!user) return null
       const fileExt = file.name.split('.').pop()
       const fileName = `${Date.now()}.${fileExt}`
-      const filePath = `avatars/${fileName}`
+      const filePath = `${user.id}/${fileName}`
 
       const { error: uploadError } = await supabase.storage
         .from('avatars')
@@ -74,17 +85,30 @@ export default function NewDebtorPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) {
-      alert('You must be logged in to create a debtor')
+      const message = 'You must be logged in to create a debtor.'
+      setError(message)
+      showErrorWarning(message)
+      return
+    }
+
+    if (!formData.name.trim()) {
+      const message = 'Name is required.'
+      setError(message)
+      showErrorWarning(message)
       return
     }
     
     setSubmitting(true)
+    setError('')
 
     try {
       let avatarUrl = null
 
       if (avatarFile) {
         avatarUrl = await uploadAvatar(avatarFile)
+        if (!avatarUrl) {
+          throw new Error('Avatar upload failed. Please try a different image.')
+        }
       }
 
       const { error } = await supabase
@@ -105,7 +129,9 @@ export default function NewDebtorPage() {
       router.push('/debtors')
     } catch (error) {
       console.error('Error creating debtor:', error)
-      alert('Failed to create debtor. Please try again.')
+      const message = getErrorMessage(error, 'Failed to create debtor. Please try again.')
+      setError(message)
+      showErrorWarning(message)
     } finally {
       setSubmitting(false)
     }
@@ -130,6 +156,12 @@ export default function NewDebtorPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {error && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
           {/* Avatar Upload */}
           <div className="flex flex-col items-center">
             <div

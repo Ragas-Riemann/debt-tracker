@@ -40,7 +40,8 @@ CREATE TABLE payments (
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     debt_id UUID NOT NULL REFERENCES debts(id) ON DELETE CASCADE,
     amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
-    notes TEXT,
+    payment_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    note TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -58,6 +59,7 @@ CREATE INDEX idx_debts_status ON debts(status);
 
 CREATE INDEX idx_payments_user_id ON payments(user_id);
 CREATE INDEX idx_payments_debt_id ON payments(debt_id);
+CREATE INDEX idx_payments_payment_date ON payments(payment_date);
 CREATE INDEX idx_payments_created_at ON payments(created_at);
 
 -- ============================================
@@ -92,7 +94,6 @@ DECLARE
     total_paid NUMERIC;
     original_amount NUMERIC;
     due DATE;
-    days_until_due INTEGER;
     target_debt_id UUID;
 BEGIN
     -- Determine which debt_id to use based on trigger type
@@ -111,7 +112,7 @@ BEGIN
     FROM payments WHERE debt_id = target_debt_id;
     
     -- Calculate days until due
-    days_until_due := EXTRACT(DAY FROM (due - CURRENT_DATE));
+    -- NOTE: status is derived from due_date vs CURRENT_DATE below.
     
     -- Update status and remaining amount based on payments and due date
     UPDATE debts
@@ -119,8 +120,8 @@ BEGIN
         remaining_amount = GREATEST(original_amount - total_paid, 0),
         status = CASE
           WHEN total_paid >= original_amount THEN 'paid'
+          WHEN due IS NOT NULL AND due < CURRENT_DATE THEN 'overdue'
           WHEN total_paid > 0 THEN 'partial'
-          WHEN due < CURRENT_DATE THEN 'overdue'
           ELSE 'pending'
         END,
         updated_at = NOW()
@@ -142,6 +143,12 @@ CREATE TRIGGER after_payment_insert_update_status
 -- Trigger to update debt status after payment deletion
 CREATE TRIGGER after_payment_delete_update_status
     AFTER DELETE ON payments
+    FOR EACH ROW
+    EXECUTE FUNCTION update_debt_status();
+
+-- Trigger to update debt status after payment updates
+CREATE TRIGGER after_payment_update_update_status
+    AFTER UPDATE OF amount, debt_id ON payments
     FOR EACH ROW
     EXECUTE FUNCTION update_debt_status();
 
